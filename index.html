@@ -255,38 +255,73 @@
       return resp.arrayBuffer();
     }
 
-    // Extraction de tout le texte d'un PDF via pdf.js
+    // Extraction du texte d'un PDF via pdf.js, reconstruit LIGNE PAR LIGNE.
+    // On regroupe les fragments par position verticale (Y) pour retrouver
+    // la structure d'origine : chaque valeur est sur la ligne SUIVANT son libelle.
     async function extraireTextePdf(buffer) {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-      let texte = '';
+      const lignes = [];
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
         const content = await page.getTextContent();
-        texte += content.items.map((i) => i.str).join(' ') + '\n';
+        const groupes = {};
+        content.items.forEach((it) => {
+          if (!it.str) return;
+          const y = Math.round(it.transform[5]); // position verticale
+          (groupes[y] = groupes[y] || []).push(it);
+        });
+        Object.keys(groupes)
+          .sort((a, b) => Number(b) - Number(a)) // haut -> bas (Y decroissant)
+          .forEach((y) => {
+            const ligne = groupes[y]
+              .sort((a, b) => a.transform[4] - b.transform[4]) // gauche -> droite
+              .map((i) => i.str)
+              .join(' ')
+              .replace(/[ \t]+/g, ' ')
+              .trim();
+            if (ligne) lignes.push(ligne);
+          });
       }
-      return texte.replace(/[ \t]+/g, ' ').trim();
+      return lignes;
     }
 
-    // Parse les champs utiles depuis le texte du certificat
-    function parserCertificat(texte) {
-      const find = (labels) => {
-        for (const label of labels) {
-          const re = new RegExp(label + '\\s*[:\\-]?\\s*([A-Z0-9ÉÈÀÂÊÎÔÛÇ\\-\\/ ]{2,60})', 'i');
-          const m = texte.match(re);
-          if (m) return m[1].trim();
-        }
-        return null;
+    // Parse les champs du certificat a partir des LIGNES reconstruites.
+    // Principe : la valeur se trouve sur la ligne SUIVANT son libelle.
+    function parserCertificat(lignes) {
+      const texte = lignes.join('\n');
+      const indexOu = (re) => lignes.findIndex((l) => re.test(l));
+      const ligneApres = (re) => {
+        const i = indexOu(re);
+        return i >= 0 && i + 1 < lignes.length ? lignes[i + 1].trim() : null;
       };
-      return {
-        proprietaire: find(['Propriétaire', 'Proprietaire', 'Titulaire', 'Nom']),
-        chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
-        matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
-        marque: find(['Marque']),
-        modele: find(['Modèle', 'Modele', 'Type']),
-        couleur: find(['Couleur']),
-        annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
-        dateEmission: find(['Date d.?émission', 'Émis le', 'Date', 'Délivré le'])
-      };
+
+      // Nom/prenom : ligne juste avant "Proprietaire du vehicule..."
+      // (en sautant une eventuelle civilite isolee "M." / "Mme")
+      let proprietaire = null;
+      const iProp = indexOu(/Propri[ée]taire du v[ée]hicule/i);
+      if (iProp > 0) {
+        let j = iProp - 1;
+        while (j >= 0 && /^(M\.?|Mme\.?|Mlle\.?)$/i.test(lignes[j].trim())) j--;
+        if (j >= 0) proprietaire = lignes[j].replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i, '').trim() || null;
+      }
+
+      // Chassis : ligne apres "...numero chassis est :"
+      const chassis = ligneApres(/ch[aâ]ssis est\s*:?\s*$/i) || ligneApres(/ch[aâ]ssis est\s*:?/i);
+
+      // Matricule : ligne apres "...sous le matricule :"
+      const matricule = ligneApres(/sous le matricule\s*:?/i);
+
+      // Annexe / departement : mot(s) apres "annexe de"
+      let annexe = null;
+      const mAnnexe = texte.match(/annexe de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '’\-]+)/i);
+      if (mAnnexe) annexe = mAnnexe[1].replace(/\s+pour\b[\s\S]*/i, '').trim();
+
+      // Numero du certificat (ex : "N° 9000")
+      let numero = null;
+      const mNum = texte.match(/N[°ºo]\s*(\d{2,})/i);
+      if (mNum) numero = mNum[1];
+
+      return { proprietaire, chassis, matricule, annexe, numero };
     }
 
     async function analyserCertificat(anattId) {
@@ -294,19 +329,17 @@
       try {
         setStatus('loading', 'Analyse du certificat PDF…');
         const buffer = await recupererPdf(anattId);
-        const texte = await extraireTextePdf(buffer);
-        const champs = parserCertificat(texte);
+        const lignes = await extraireTextePdf(buffer);
+        const texte = lignes.join('\n');
+        const champs = parserCertificat(lignes);
         clearStatus();
 
         const rows = [
+          { label: 'N° Certificat', value: champs.numero, icon: 'hash' },
           { label: 'Propriétaire', value: champs.proprietaire, icon: 'user' },
           { label: 'N° Châssis', value: champs.chassis, icon: 'fingerprint' },
           { label: 'Matricule', value: champs.matricule, icon: 'car' },
-          { label: 'Marque', value: champs.marque, icon: 'tag' },
-          { label: 'Modèle', value: champs.modele, icon: 'bike' },
-          { label: 'Couleur', value: champs.couleur, icon: 'palette' },
-          { label: 'Annexe de', value: champs.annexe, icon: 'map-pin' },
-          { label: 'Date', value: champs.dateEmission, icon: 'calendar' }
+          { label: 'Annexe de', value: champs.annexe, icon: 'map-pin' }
         ];
 
         zone.innerHTML = `
@@ -375,21 +408,14 @@
     const TAILLE_LOT = 10;
     let dernierLot = []; // pour l'export CSV
 
-    // Parse les 4 champs demandes depuis le texte du certificat
-    function parserLot(texte) {
-      const find = (labels) => {
-        for (const label of labels) {
-          const re = new RegExp(label + '\\s*[:\\-]?\\s*([A-Z0-9ÉÈÀÂÊÎÔÛÇ\\-\\/ ]{2,60})', 'i');
-          const m = texte.match(re);
-          if (m) return m[1].trim();
-        }
-        return null;
-      };
+    // Parse les 4 champs demandes en reutilisant le parseur par ancrage
+    function parserLot(lignes) {
+      const c = parserCertificat(lignes);
       return {
-        nomPrenom: find(['Propriétaire', 'Proprietaire', 'Titulaire', 'Nom et prénom', 'Nom et prenom', 'Nom']),
-        immatriculation: find(['Immatriculation', 'Matricule', 'Plaque']),
-        departement: find(['Département', 'Departement', 'Annexe de', 'Annexe']),
-        chassis: find(['N.?\\s*Châssis', 'Châssis', 'Chassis', 'VIN'])
+        nomPrenom: c.proprietaire,
+        immatriculation: c.matricule,
+        departement: c.annexe,
+        chassis: c.chassis
       };
     }
 
@@ -481,8 +507,8 @@
         let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
         try {
           const buffer = await recupererPdf(numero);
-          const texte = await extraireTextePdf(buffer);
-          const champs = parserLot(texte);
+          const lignes = await extraireTextePdf(buffer);
+          const champs = parserLot(lignes);
           ligne = { numero, ...champs, statut: (champs.nomPrenom || champs.chassis) ? 'OK' : 'Vide' };
         } catch (err) {
           ligne.statut = 'Erreur';
