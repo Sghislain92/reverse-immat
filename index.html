@@ -490,7 +490,7 @@
 
     batchForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const debut = parseInt($('start-num').value, 500);
+      const debut = parseInt($('start-num').value, 10);
       resultEl.classList.add('hidden');
       batchResultEl.classList.add('hidden');
       if (!Number.isInteger(debut) || debut < 1) {
