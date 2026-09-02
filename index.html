@@ -42,7 +42,6 @@
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .progress-bar { transition: width 0.3s ease; }
   </style>
 </head>
 
@@ -68,7 +67,7 @@
 
   <main class="mx-auto max-w-3xl px-4 py-8">
 
-    <!-- Recherche par VIN -->
+    <!-- Recherche -->
     <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 class="text-base font-semibold text-slate-900">Recherche par numéro de châssis (VIN)</h2>
       <p class="mt-1 text-sm text-slate-500">Saisissez le VIN à contrôler dans la base officielle.</p>
@@ -99,12 +98,12 @@
       </details>
     </section>
 
-    <!-- Extraction par lots -->
+    <!-- Recherche par numero de telechargement (lot de 10) -->
     <section class="mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 class="text-base font-semibold text-slate-900">Extraction par lots</h2>
+      <h2 class="text-base font-semibold text-slate-900">Recherche par numéro de téléchargement</h2>
       <p class="mt-1 text-sm text-slate-500">
-        Extrait automatiquement <span class="font-bold">500 certificats</span> consécutifs à partir du numéro saisi,
-        par lots de <span class="font-bold">10</span> avec une pause de <span class="font-bold">2 secondes</span> entre chaque lot.
+        Analyse automatique de 10 certificats consécutifs à partir du numéro saisi
+        (<span class="font-mono">/telechargement/{n}</span> → <span class="font-mono">{n+9}</span>).
       </p>
 
       <form id="batch-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -117,57 +116,18 @@
         <button id="batch-btn" type="submit"
           class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:opacity-60">
           <i data-lucide="layers" class="h-4 w-4"></i>
-          <span>Lancer l'extraction (500)</span>
-        </button>
-        <button id="stop-btn" type="button"
-          class="hidden inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700">
-          <i data-lucide="square" class="h-4 w-4"></i>
-          <span>Arrêter</span>
+          <span>Analyser 10 certificats</span>
         </button>
       </form>
-
-      <!-- Paramètres avancés -->
-      <details class="mt-3 text-sm">
-        <summary class="cursor-pointer text-slate-500 hover:text-slate-700">Paramètres avancés</summary>
-        <div class="mt-2 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3">
-          <div>
-            <label for="batch-size" class="text-xs font-medium text-slate-600">Taille du lot</label>
-            <input id="batch-size" type="number" value="10" min="1" max="50"
-              class="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-800 outline-none focus:border-brand-600" />
-          </div>
-          <div>
-            <label for="pause-delay" class="text-xs font-medium text-slate-600">Pause (secondes)</label>
-            <input id="pause-delay" type="number" value="2" min="0.5" max="10" step="0.5"
-              class="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-800 outline-none focus:border-brand-600" />
-          </div>
-          <div class="col-span-2">
-            <label for="total-count" class="text-xs font-medium text-slate-600">Nombre total à extraire</label>
-            <input id="total-count" type="number" value="500" min="10" max="10000" step="10"
-              class="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-800 outline-none focus:border-brand-600" />
-          </div>
-        </div>
-      </details>
     </section>
 
-    <!-- État et progression -->
+    <!-- Etat -->
     <div id="status" class="mt-4 hidden fade-in"></div>
 
-    <!-- Barre de progression -->
-    <div id="progress-container" class="mt-4 hidden">
-      <div class="flex items-center justify-between text-sm">
-        <span id="progress-text" class="font-medium text-slate-700">0 / 0</span>
-        <span id="progress-percent" class="text-slate-500">0%</span>
-      </div>
-      <div class="mt-1 h-2.5 w-full rounded-full bg-slate-200 overflow-hidden">
-        <div id="progress-bar" class="progress-bar h-2.5 rounded-full bg-brand-600" style="width:0%"></div>
-      </div>
-      <div id="progress-detail" class="mt-1 text-xs text-slate-400"></div>
-    </div>
-
-    <!-- Résultat recherche VIN -->
+    <!-- Resultat recherche VIN -->
     <section id="result" class="mt-4 hidden fade-in"></section>
 
-    <!-- Résultat lot -->
+    <!-- Resultat lot -->
     <section id="batch-result" class="mt-4 hidden fade-in"></section>
 
   </main>
@@ -180,10 +140,6 @@
   </footer>
 
   <script>
-    // ============================================================
-    // ORACLE — Script complet
-    // ============================================================
-
     const $ = (id) => document.getElementById(id);
     const form = $('search-form');
     const statusEl = $('status');
@@ -192,22 +148,13 @@
 
     const ANATT_BASE = 'https://www.moto.anatt.bj';
 
-    // Variables pour le lot
-    let stopExtraction = false;
-    let isExtracting = false;
-
-    // ============================================================
-    // UTILITAIRES
-    // ============================================================
-
     function setStatus(type, message) {
       const styles = {
         loading: 'border-brand-200 bg-brand-50 text-brand-800',
-        error: 'border-red-200 bg-red-50 text-red-700',
-        info: 'border-slate-200 bg-slate-50 text-slate-600',
-        success: 'border-green-200 bg-green-50 text-green-700'
+        error:   'border-red-200 bg-red-50 text-red-700',
+        info:    'border-slate-200 bg-slate-50 text-slate-600'
       };
-      const icon = { loading: 'loader-2', error: 'alert-triangle', info: 'info', success: 'check-circle-2' }[type];
+      const icon = { loading: 'loader-2', error: 'alert-triangle', info: 'info' }[type];
       const spin = type === 'loading' ? 'spin' : '';
       statusEl.className = 'mt-4 fade-in rounded-lg border px-4 py-3 text-sm flex items-center gap-2 ' + styles[type];
       statusEl.innerHTML = `<i data-lucide="${icon}" class="h-4 w-4 ${spin}"></i><span>${message}</span>`;
@@ -217,34 +164,7 @@
 
     function clearStatus() { statusEl.classList.add('hidden'); statusEl.innerHTML = ''; }
 
-    function updateProgress(current, total, detail) {
-      const container = $('progress-container');
-      const bar = $('progress-bar');
-      const text = $('progress-text');
-      const percent = $('progress-percent');
-      const detailEl = $('progress-detail');
-
-      container.classList.remove('hidden');
-      const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-      bar.style.width = pct + '%';
-      text.textContent = `${current} / ${total}`;
-      percent.textContent = pct + '%';
-      if (detail) detailEl.textContent = detail;
-    }
-
-    function resetProgress() {
-      const container = $('progress-container');
-      container.classList.add('hidden');
-      $('progress-bar').style.width = '0%';
-      $('progress-text').textContent = '0 / 0';
-      $('progress-percent').textContent = '0%';
-      $('progress-detail').textContent = '';
-    }
-
-    // ============================================================
-    // EXTRACTION DES DONNÉES
-    // ============================================================
-
+    // Extraction des donnees depuis le HTML retourne par ANaTT
     function extraireDonnees(html) {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const text = doc.body ? doc.body.textContent.replace(/\s+/g, ' ').trim() : '';
@@ -258,127 +178,25 @@
         return null;
       };
 
+      // Identifiant ANaTT pour le certificat (lien /telechargement/{id})
       let anattId = null;
       doc.querySelectorAll('a[href*="/telechargement/"]').forEach((a) => {
         const m = a.getAttribute('href').match(/telechargement\/(\d+)/);
         if (m) anattId = m[1];
       });
 
-      return {
-        data: {
-          proprietaire: find(['Propriétaire', 'Proprietaire', 'Nom']),
-          chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
-          matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
-          annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
-          numero: find(['N°', 'Numéro', 'Numero']),
-          anattId
-        },
-        found: Object.values(data).some((v) => v)
-      };
-    }
-
-    async function recupererPdf(anattId) {
-      const proxy = $('proxy').value.trim();
-      const target = `${ANATT_BASE}/telechargement/${anattId}`;
-      const resp = await fetch(proxy + encodeURIComponent(target));
-      if (!resp.ok) throw new Error(`Erreur ${resp.status} lors de la récupération du PDF.`);
-      return resp.arrayBuffer();
-    }
-
-    async function extraireTextePdf(buffer) {
-      const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-      const lignes = [];
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p);
-        const content = await page.getTextContent();
-        const groupes = {};
-        content.items.forEach((it) => {
-          if (!it.str) return;
-          const y = Math.round(it.transform[5]);
-          (groupes[y] = groupes[y] || []).push(it);
-        });
-        Object.keys(groupes)
-          .sort((a, b) => Number(b) - Number(a))
-          .forEach((y) => {
-            const ligne = groupes[y]
-              .sort((a, b) => a.transform[4] - b.transform[4])
-              .map((i) => i.str)
-              .join(' ')
-              .replace(/[ \t]+/g, ' ')
-              .trim();
-            if (ligne) lignes.push(ligne);
-          });
-      }
-      return lignes;
-    }
-
-    function parserCertificat(lignes) {
-      const texte = lignes.join('\n');
-      const indexOu = (re) => lignes.findIndex((l) => re.test(l));
-      const ligneApres = (re) => {
-        const i = indexOu(re);
-        return i >= 0 && i + 1 < lignes.length ? lignes[i + 1].trim() : null;
+      const data = {
+        proprietaire: find(['Propriétaire', 'Proprietaire', 'Nom']),
+        chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
+        matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
+        annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
+        numero: find(['N°', 'Numéro', 'Numero']),
+        anattId
       };
 
-      let proprietaire = null;
-      const iProp = indexOu(/Propri[ée]taire du v[ée]hicule/i);
-      if (iProp > 0) {
-        let j = iProp - 1;
-        while (j >= 0 && /^(M\.?|Mme\.?|Mlle\.?)$/i.test(lignes[j].trim())) j--;
-        if (j >= 0) proprietaire = lignes[j].replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i, '').trim() || null;
-      }
-
-      const chassis = ligneApres(/ch[aâ]ssis est\s*:?\s*$/i) || ligneApres(/ch[aâ]ssis est\s*:?/i);
-      const matricule = ligneApres(/sous le matricule\s*:?/i);
-
-      let annexe = null;
-      const mAnnexe = texte.match(/annexe de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '’\-]+)/i);
-      if (mAnnexe) annexe = mAnnexe[1].replace(/\s+pour\b[\s\S]*/i, '').trim();
-
-      let numero = null;
-      const mNum = texte.match(/N[°ºo]\s*(\d{2,})/i);
-      if (mNum) numero = mNum[1];
-
-      return { proprietaire, chassis, matricule, annexe, numero };
+      const found = Object.values(data).some((v) => v);
+      return { data, found, raw: text.slice(0, 500) };
     }
-
-    function parserLot(lignes) {
-      const c = parserCertificat(lignes);
-      return {
-        nomPrenom: c.proprietaire,
-        immatriculation: c.matricule,
-        departement: c.annexe,
-        chassis: c.chassis
-      };
-    }
-
-    function echapCsv(v) {
-      const s = (v == null ? '' : String(v));
-      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    }
-
-    function exporterCsv(lignes) {
-      if (!lignes || lignes.length === 0) {
-        setStatus('error', 'Aucune donnée à exporter.');
-        return;
-      }
-      const entetes = ['Numéro', 'Nom et prénom', 'Immatriculation', 'Département', 'Châssis', 'Statut'];
-      const corps = lignes.map((l) => [
-        l.numero, l.nomPrenom, l.immatriculation, l.departement, l.chassis, l.statut
-      ].map(echapCsv).join(';'));
-      const csv = '\uFEFF' + [entetes.join(';'), ...corps].join('\r\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      const debut = lignes[0]?.numero || 'export';
-      a.download = `certificats-${debut}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
-    // ============================================================
-    // RENDU DES RÉSULTATS
-    // ============================================================
 
     function renderResult(data) {
       const rows = [
@@ -428,61 +246,83 @@
       if (dl) dl.addEventListener('click', () => telechargerCertificat(dl.dataset.id));
     }
 
-    function renderLot(lignes, termine) {
-      batchResultEl.innerHTML = `
-        <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div class="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
-            <div class="flex items-center gap-2">
-              <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
-              <h3 class="text-sm font-semibold text-slate-800">Analyse du lot (${lignes.length} certificats)</h3>
-            </div>
-            <div class="flex gap-2">
-              ${termine ? `
-                <button id="export-csv"
-                  class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800">
-                  <i data-lucide="download" class="h-4 w-4"></i> Exporter (CSV)
-                </button>` : ''}
-            </div>
-          </div>
-          <div class="overflow-x-auto max-h-[400px] overflow-y-auto">
-            <table class="w-full text-left text-sm">
-              <thead class="sticky top-0 bg-white text-xs uppercase tracking-wide text-slate-400 border-b border-slate-200">
-                <tr>
-                  <th class="px-4 py-2 font-medium">N°</th>
-                  <th class="px-4 py-2 font-medium">Nom et prénom</th>
-                  <th class="px-4 py-2 font-medium">Immatriculation</th>
-                  <th class="px-4 py-2 font-medium">Département</th>
-                  <th class="px-4 py-2 font-medium">Châssis</th>
-                  <th class="px-4 py-2 font-medium">Statut</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-100 font-mono text-xs">
-                ${lignes.map((l) => `
-                  <tr class="${l.statut === 'OK' ? '' : 'bg-red-50/40'}">
-                    <td class="px-4 py-2.5 text-slate-500">${l.numero}</td>
-                    <td class="px-4 py-2.5 ${l.nomPrenom ? 'text-slate-900' : 'text-slate-300'}">${l.nomPrenom || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.immatriculation ? 'text-slate-900' : 'text-slate-300'}">${l.immatriculation || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.departement ? 'text-slate-900' : 'text-slate-300'}">${l.departement || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.chassis ? 'text-slate-900' : 'text-slate-300'}">${l.chassis || '—'}</td>
-                    <td class="px-4 py-2.5">
-                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${l.statut === 'OK' ? 'bg-brand-50 text-brand-700' : 'bg-red-100 text-red-700'}">
-                        ${l.statut}
-                      </span>
-                    </td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
-      batchResultEl.classList.remove('hidden');
-      lucide.createIcons();
-      const exp = $('export-csv');
-      if (exp) exp.addEventListener('click', () => exporterCsv(lignes));
+    // Recupere le PDF via /telechargement/{id} et renvoie son ArrayBuffer
+    async function recupererPdf(anattId) {
+      const proxy = $('proxy').value.trim();
+      const target = `${ANATT_BASE}/telechargement/${anattId}`;
+      const resp = await fetch(proxy + encodeURIComponent(target));
+      if (!resp.ok) throw new Error(`Erreur ${resp.status} lors de la récupération du PDF.`);
+      return resp.arrayBuffer();
     }
 
-    // ============================================================
-    // ANALYSE D'UN CERTIFICAT INDIVIDUEL
-    // ============================================================
+    // Extraction du texte d'un PDF via pdf.js, reconstruit LIGNE PAR LIGNE.
+    // On regroupe les fragments par position verticale (Y) pour retrouver
+    // la structure d'origine : chaque valeur est sur la ligne SUIVANT son libelle.
+    async function extraireTextePdf(buffer) {
+      const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const lignes = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const groupes = {};
+        content.items.forEach((it) => {
+          if (!it.str) return;
+          const y = Math.round(it.transform[5]); // position verticale
+          (groupes[y] = groupes[y] || []).push(it);
+        });
+        Object.keys(groupes)
+          .sort((a, b) => Number(b) - Number(a)) // haut -> bas (Y decroissant)
+          .forEach((y) => {
+            const ligne = groupes[y]
+              .sort((a, b) => a.transform[4] - b.transform[4]) // gauche -> droite
+              .map((i) => i.str)
+              .join(' ')
+              .replace(/[ \t]+/g, ' ')
+              .trim();
+            if (ligne) lignes.push(ligne);
+          });
+      }
+      return lignes;
+    }
+
+    // Parse les champs du certificat a partir des LIGNES reconstruites.
+    // Principe : la valeur se trouve sur la ligne SUIVANT son libelle.
+    function parserCertificat(lignes) {
+      const texte = lignes.join('\n');
+      const indexOu = (re) => lignes.findIndex((l) => re.test(l));
+      const ligneApres = (re) => {
+        const i = indexOu(re);
+        return i >= 0 && i + 1 < lignes.length ? lignes[i + 1].trim() : null;
+      };
+
+      // Nom/prenom : ligne juste avant "Proprietaire du vehicule..."
+      // (en sautant une eventuelle civilite isolee "M." / "Mme")
+      let proprietaire = null;
+      const iProp = indexOu(/Propri[ée]taire du v[ée]hicule/i);
+      if (iProp > 0) {
+        let j = iProp - 1;
+        while (j >= 0 && /^(M\.?|Mme\.?|Mlle\.?)$/i.test(lignes[j].trim())) j--;
+        if (j >= 0) proprietaire = lignes[j].replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i, '').trim() || null;
+      }
+
+      // Chassis : ligne apres "...numero chassis est :"
+      const chassis = ligneApres(/ch[aâ]ssis est\s*:?\s*$/i) || ligneApres(/ch[aâ]ssis est\s*:?/i);
+
+      // Matricule : ligne apres "...sous le matricule :"
+      const matricule = ligneApres(/sous le matricule\s*:?/i);
+
+      // Annexe / departement : mot(s) apres "annexe de"
+      let annexe = null;
+      const mAnnexe = texte.match(/annexe de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '’\-]+)/i);
+      if (mAnnexe) annexe = mAnnexe[1].replace(/\s+pour\b[\s\S]*/i, '').trim();
+
+      // Numero du certificat (ex : "N° 9000")
+      let numero = null;
+      const mNum = texte.match(/N[°ºo]\s*(\d{2,})/i);
+      if (mNum) numero = mNum[1];
+
+      return { proprietaire, chassis, matricule, annexe, numero };
+    }
 
     async function analyserCertificat(anattId) {
       const zone = $('cert-info');
@@ -530,6 +370,16 @@
       }
     }
 
+    async function verifierChassis(vin) {
+      const proxy = $('proxy').value.trim();
+      const target = `${ANATT_BASE}/recherche?search_type=chassis&search=${encodeURIComponent(vin)}`;
+      const url = proxy + encodeURIComponent(target);
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Le proxy a répondu ${resp.status}. Vérifiez sa configuration.`);
+      const html = await resp.text();
+      return extraireDonnees(html);
+    }
+
     async function telechargerCertificat(anattId) {
       try {
         setStatus('loading', 'Récupération du certificat…');
@@ -550,19 +400,129 @@
       }
     }
 
-    // ============================================================
-    // RECHERCHE PAR VIN
-    // ============================================================
+    /* ---------- Recherche par numero de telechargement (lot de 10) ---------- */
 
-    async function verifierChassis(vin) {
-      const proxy = $('proxy').value.trim();
-      const target = `${ANATT_BASE}/recherche?search_type=chassis&search=${encodeURIComponent(vin)}`;
-      const url = proxy + encodeURIComponent(target);
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`Le proxy a répondu ${resp.status}. Vérifiez sa configuration.`);
-      const html = await resp.text();
-      return extraireDonnees(html);
+    const batchForm = $('batch-form');
+    const batchBtn = $('batch-btn');
+    const batchResultEl = $('batch-result');
+    const TAILLE_LOT = 10;
+    let dernierLot = []; // pour l'export CSV
+
+    // Parse les 4 champs demandes en reutilisant le parseur par ancrage
+    function parserLot(lignes) {
+      const c = parserCertificat(lignes);
+      return {
+        nomPrenom: c.proprietaire,
+        immatriculation: c.matricule,
+        departement: c.annexe,
+        chassis: c.chassis
+      };
     }
+
+    function echapCsv(v) {
+      const s = (v == null ? '' : String(v));
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    function exporterCsv(lignes) {
+      const entetes = ['Numéro', 'Nom et prénom', 'Immatriculation', 'Département', 'Châssis', 'Statut'];
+      const corps = lignes.map((l) => [
+        l.numero, l.nomPrenom, l.immatriculation, l.departement, l.chassis, l.statut
+      ].map(echapCsv).join(';'));
+      const csv = '\uFEFF' + [entetes.join(';'), ...corps].join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `certificats-${lignes[0]?.numero || 'export'}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function renderLot(lignes, termine) {
+      batchResultEl.innerHTML = `
+        <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
+            <div class="flex items-center gap-2">
+              <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
+              <h3 class="text-sm font-semibold text-slate-800">Analyse du lot (${lignes.length}/${TAILLE_LOT})</h3>
+            </div>
+            ${termine ? `
+              <button id="export-csv"
+                class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800">
+                <i data-lucide="download" class="h-4 w-4"></i> Exporter les infos (CSV)
+              </button>` : ''}
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-white text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th class="px-4 py-2 font-medium">N°</th>
+                  <th class="px-4 py-2 font-medium">Nom et prénom</th>
+                  <th class="px-4 py-2 font-medium">Immatriculation</th>
+                  <th class="px-4 py-2 font-medium">Département</th>
+                  <th class="px-4 py-2 font-medium">Châssis</th>
+                  <th class="px-4 py-2 font-medium">Statut</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 font-mono text-xs">
+                ${lignes.map((l) => `
+                  <tr class="${l.statut === 'OK' ? '' : 'bg-red-50/40'}">
+                    <td class="px-4 py-2.5 text-slate-500">${l.numero}</td>
+                    <td class="px-4 py-2.5 ${l.nomPrenom ? 'text-slate-900' : 'text-slate-300'}">${l.nomPrenom || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.immatriculation ? 'text-slate-900' : 'text-slate-300'}">${l.immatriculation || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.departement ? 'text-slate-900' : 'text-slate-300'}">${l.departement || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.chassis ? 'text-slate-900' : 'text-slate-300'}">${l.chassis || '—'}</td>
+                    <td class="px-4 py-2.5">
+                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${l.statut === 'OK' ? 'bg-brand-50 text-brand-700' : 'bg-red-100 text-red-700'}">
+                        ${l.statut}
+                      </span>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+      batchResultEl.classList.remove('hidden');
+      lucide.createIcons();
+      const exp = $('export-csv');
+      if (exp) exp.addEventListener('click', () => exporterCsv(dernierLot));
+    }
+
+    batchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const debut = parseInt($('start-num').value, 500);
+      resultEl.classList.add('hidden');
+      batchResultEl.classList.add('hidden');
+      if (!Number.isInteger(debut) || debut < 1) {
+        setStatus('error', 'Veuillez saisir un numéro de départ valide.');
+        return;
+      }
+
+      batchBtn.disabled = true;
+      dernierLot = [];
+
+      for (let i = 0; i < TAILLE_LOT; i++) {
+        const numero = debut + i;
+        setStatus('loading', `Analyse du certificat ${numero} (${i + 1}/${TAILLE_LOT})…`);
+        let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
+        try {
+          const buffer = await recupererPdf(numero);
+          const lignes = await extraireTextePdf(buffer);
+          const champs = parserLot(lignes);
+          ligne = { numero, ...champs, statut: (champs.nomPrenom || champs.chassis) ? 'OK' : 'Vide' };
+        } catch (err) {
+          ligne.statut = 'Erreur';
+        }
+        dernierLot.push(ligne);
+        renderLot(dernierLot, false);
+      }
+
+      clearStatus();
+      renderLot(dernierLot, true);
+      batchBtn.disabled = false;
+    });
+
+    /* ---------- Recherche par VIN ---------- */
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -587,131 +547,7 @@
       }
     });
 
-    // ============================================================
-    // EXTRACTION PAR LOTS (avec pause)
-    // ============================================================
-
-    let dernierLot = [];
-
-    batchForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-
-      // Réinitialiser
-      stopExtraction = false;
-      isExtracting = true;
-
-      const debut = parseInt($('start-num').value, 10);
-      const tailleLot = parseInt($('batch-size').value, 10) || 10;
-      const pauseMs = (parseFloat($('pause-delay').value) || 2) * 1000;
-      const totalCount = parseInt($('total-count').value, 10) || 500;
-
-      resultEl.classList.add('hidden');
-      batchResultEl.classList.add('hidden');
-
-      if (!Number.isInteger(debut) || debut < 1) {
-        setStatus('error', 'Veuillez saisir un numéro de départ valide.');
-        isExtracting = false;
-        return;
-      }
-
-      // Activer le bouton stop
-      const stopBtn = $('stop-btn');
-      stopBtn.classList.remove('hidden');
-
-      const batchBtn = $('batch-btn');
-      batchBtn.disabled = true;
-      batchBtn.innerHTML = '<span class="spin"><i data-lucide="loader-2" class="h-4 w-4"></i></span> Extraction en cours...';
-      lucide.createIcons();
-
-      dernierLot = [];
-
-      let totalTraites = 0;
-
-      for (let start = 0; start < totalCount; start += tailleLot) {
-        if (stopExtraction) {
-          setStatus('info', `⏹️ Extraction arrêtée par l'utilisateur. ${dernierLot.length} certificats traités.`);
-          break;
-        }
-
-        const end = Math.min(start + tailleLot, totalCount);
-        const batchSize = end - start;
-
-        setStatus('loading', `Lot ${Math.floor(start / tailleLot) + 1}/${Math.ceil(totalCount / tailleLot)} — Traitement des numéros ${debut + start} à ${debut + end - 1}...`);
-
-        // Traiter le lot
-        const batchPromises = [];
-        for (let i = 0; i < batchSize; i++) {
-          const numero = debut + start + i;
-          batchPromises.push((async () => {
-            let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
-            try {
-              const buffer = await recupererPdf(numero);
-              const lignes = await extraireTextePdf(buffer);
-              const champs = parserLot(lignes);
-              ligne = { numero, ...champs, statut: (champs.nomPrenom || champs.chassis) ? 'OK' : 'Vide' };
-            } catch (err) {
-              ligne.statut = 'Erreur';
-            }
-            return ligne;
-          })());
-        }
-
-        const batchResults = await Promise.all(batchPromises);
-        dernierLot.push(...batchResults);
-        totalTraites += batchSize;
-
-        // Mettre à jour la progression
-        updateProgress(totalTraites, totalCount,
-          `Lot ${Math.floor(start / tailleLot) + 1}/${Math.ceil(totalCount / tailleLot)} — ${batchResults.filter(r => r.statut === 'OK').length} trouvés`
-        );
-
-        // Afficher les résultats intermédiaires
-        renderLot(dernierLot, false);
-
-        // Pause entre les lots (sauf si c'est le dernier)
-        if (start + tailleLot < totalCount && !stopExtraction) {
-          await new Promise(r => setTimeout(r, pauseMs));
-        }
-      }
-
-      // Finaliser
-      stopBtn.classList.add('hidden');
-      batchBtn.disabled = false;
-      batchBtn.innerHTML = '<i data-lucide="layers" class="h-4 w-4"></i> Lancer l\'extraction';
-      lucide.createIcons();
-
-      if (dernierLot.length > 0 && !stopExtraction) {
-        clearStatus();
-        setStatus('success', `✅ Extraction terminée. ${dernierLot.filter(r => r.statut === 'OK').length} certificats valides sur ${dernierLot.length}.`);
-        renderLot(dernierLot, true);
-      } else if (stopExtraction && dernierLot.length > 0) {
-        renderLot(dernierLot, true);
-      } else {
-        setStatus('error', 'Aucune donnée extraite.');
-      }
-
-      isExtracting = false;
-    });
-
-    // ============================================================
-    // BOUTON ARRÊT
-    // ============================================================
-
-    $('stop-btn').addEventListener('click', () => {
-      if (isExtracting) {
-        stopExtraction = true;
-        setStatus('info', '⏹️ Arrêt demandé… Fin du lot en cours.');
-      }
-    });
-
-    // ============================================================
-    // INITIALISATION
-    // ============================================================
-
     lucide.createIcons();
-
-    console.log('🚀 Oracle v2.0 — Extraction par lots');
-    console.log('📋 Utilisez le formulaire "Extraction par lots" pour analyser 500 certificats consécutifs.');
   </script>
 </body>
 </html>
