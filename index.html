@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="fr" class="bg-slate-50">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oracle — Vérification ANaTT</title>
+  <meta name="description" content="Outil de contrôle et de vérification de véhicules par numéro de châssis (VIN) via le service public ANaTT." />
+  <meta name="theme-color" content="#0f766e" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window['pdfjsLib']) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdfa', 100: '#ccfbf1', 500: '#14b8a6',
+              600: '#0d9488', 700: '#0f766e', 800: '#115e59', 900: '#134e4a'
+            }
+          },
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { -webkit-font-smoothing: antialiased; }
+    .fade-in { animation: fadeIn .35s ease both; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-50 text-slate-800 font-sans">
+
+  <!-- Header -->
+  <header class="border-b border-slate-200 bg-white">
+    <div class="mx-auto max-w-3xl px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-700 text-white">
+          <i data-lucide="shield-check" class="h-5 w-5"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold leading-tight text-slate-900">Oracle</h1>
+          <p class="text-xs text-slate-500">Vérification de véhicule — ANaTT</p>
+        </div>
+      </div>
+      <span class="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+        <i data-lucide="badge-check" class="h-3.5 w-3.5"></i> Agent habilité
+      </span>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-3xl px-4 py-8">
+
+    <!-- Recherche -->
+    <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold text-slate-900">Recherche par numéro de châssis (VIN)</h2>
+      <p class="mt-1 text-sm text-slate-500">Saisissez le VIN à contrôler dans la base officielle.</p>
+
+      <form id="search-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
+        <div class="relative flex-1">
+          <i data-lucide="hash" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
+          <input id="vin" type="text" autocomplete="off" spellcheck="false"
+            placeholder="Ex : LATXCGLY3F1133907"
+            class="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 font-mono text-sm uppercase tracking-wide text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100" />
+        </div>
+        <button id="search-btn" type="submit"
+          class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:opacity-60">
+          <i data-lucide="search" class="h-4 w-4"></i>
+          <span>Vérifier</span>
+        </button>
+      </form>
+
+      <!-- Config proxy -->
+      <details class="mt-4 text-sm">
+        <summary class="cursor-pointer text-slate-500 hover:text-slate-700">Configuration du proxy</summary>
+        <div class="mt-2 rounded-lg bg-slate-50 p-3">
+          <label for="proxy" class="text-xs font-medium text-slate-600">Endpoint proxy (préfixe avant l'URL encodée)</label>
+          <input id="proxy" type="text" value="/api/proxy?url="
+            class="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-800 outline-none focus:border-brand-600" />
+          <p class="mt-1.5 text-xs text-slate-500">Requis pour contourner le CORS. Doit renvoyer HTML et PDF (arrayBuffer).</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- Recherche par numero de telechargement (lot de 10) -->
+    <section class="mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 class="text-base font-semibold text-slate-900">Recherche par numéro de téléchargement</h2>
+      <p class="mt-1 text-sm text-slate-500">
+        Analyse automatique de 10 certificats consécutifs à partir du numéro saisi
+        (<span class="font-mono">/telechargement/{n}</span> → <span class="font-mono">{n+9}</span>).
+      </p>
+
+      <form id="batch-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
+        <div class="relative flex-1">
+          <i data-lucide="list-ordered" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
+          <input id="start-num" type="number" min="1" inputmode="numeric" autocomplete="off"
+            placeholder="Ex : 10520"
+            class="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 font-mono text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100" />
+        </div>
+        <button id="batch-btn" type="submit"
+          class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:opacity-60">
+          <i data-lucide="layers" class="h-4 w-4"></i>
+          <span>Analyser 10 certificats</span>
+        </button>
+      </form>
+    </section>
+
+    <!-- Etat -->
+    <div id="status" class="mt-4 hidden fade-in"></div>
+
+    <!-- Resultat recherche VIN -->
+    <section id="result" class="mt-4 hidden fade-in"></section>
+
+    <!-- Resultat lot -->
+    <section id="batch-result" class="mt-4 hidden fade-in"></section>
+
+  </main>
+
+  <footer class="mx-auto max-w-3xl px-4 pb-10 pt-2">
+    <p class="text-xs leading-relaxed text-slate-400">
+      Consultation ponctuelle réservée aux missions de contrôle officielles par des agents habilités.
+      Les données sont utilisées uniquement à des fins de traçabilité des vérifications.
+    </p>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const form = $('search-form');
+    const statusEl = $('status');
+    const resultEl = $('result');
+    const btn = $('search-btn');
+
+    const ANATT_BASE = 'https://www.moto.anatt.bj';
+
+    function setStatus(type, message) {
+      const styles = {
+        loading: 'border-brand-200 bg-brand-50 text-brand-800',
+        error:   'border-red-200 bg-red-50 text-red-700',
+        info:    'border-slate-200 bg-slate-50 text-slate-600'
+      };
+      const icon = { loading: 'loader-2', error: 'alert-triangle', info: 'info' }[type];
+      const spin = type === 'loading' ? 'spin' : '';
+      statusEl.className = 'mt-4 fade-in rounded-lg border px-4 py-3 text-sm flex items-center gap-2 ' + styles[type];
+      statusEl.innerHTML = `<i data-lucide="${icon}" class="h-4 w-4 ${spin}"></i><span>${message}</span>`;
+      statusEl.classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function clearStatus() { statusEl.classList.add('hidden'); statusEl.innerHTML = ''; }
+
+    // Extraction des donnees depuis le HTML retourne par ANaTT
+    function extraireDonnees(html) {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const text = doc.body ? doc.body.textContent.replace(/\s+/g, ' ').trim() : '';
+
+      const find = (labels) => {
+        for (const label of labels) {
+          const re = new RegExp(label + '\\s*[:\\-]?\\s*([A-Z0-9ÉÈÀÂÊÎÔÛÇ\\- ]{2,60})', 'i');
+          const m = text.match(re);
+          if (m) return m[1].trim();
+        }
+        return null;
+      };
+
+      // Identifiant ANaTT pour le certificat (lien /telechargement/{id})
+      let anattId = null;
+      doc.querySelectorAll('a[href*="/telechargement/"]').forEach((a) => {
+        const m = a.getAttribute('href').match(/telechargement\/(\d+)/);
+        if (m) anattId = m[1];
+      });
+
+      const data = {
+        proprietaire: find(['Propriétaire', 'Proprietaire', 'Nom']),
+        chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
+        matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
+        annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
+        numero: find(['N°', 'Numéro', 'Numero']),
+        anattId
+      };
+
+      const found = Object.values(data).some((v) => v);
+      return { data, found, raw: text.slice(0, 500) };
+    }
+
+    function renderResult(data) {
+      const rows = [
+        { label: 'N°', value: data.numero, icon: 'hash' },
+        { label: 'Propriétaire', value: data.proprietaire, icon: 'user' },
+        { label: 'N° Châssis', value: data.chassis, icon: 'fingerprint' },
+        { label: 'Matricule', value: data.matricule, icon: 'car' },
+        { label: 'Annexe de', value: data.annexe, icon: 'map-pin' }
+      ];
+
+      resultEl.innerHTML = `
+        <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="flex items-center gap-2 border-b border-slate-100 bg-brand-50 px-6 py-4">
+            <i data-lucide="check-circle-2" class="h-5 w-5 text-brand-700"></i>
+            <h3 class="text-sm font-semibold text-brand-900">Véhicule trouvé dans la base ANaTT</h3>
+          </div>
+          <dl class="divide-y divide-slate-100">
+            ${rows.map((r) => `
+              <div class="flex items-center gap-4 px-6 py-3.5">
+                <dt class="flex w-40 shrink-0 items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                  <i data-lucide="${r.icon}" class="h-4 w-4"></i>${r.label}
+                </dt>
+                <dd class="font-mono text-sm ${r.value ? 'text-slate-900' : 'text-slate-300'}">
+                  ${r.value || '—'}
+                </dd>
+              </div>`).join('')}
+          </dl>
+          ${data.anattId ? `
+          <div class="flex flex-wrap gap-3 border-t border-slate-100 px-6 py-4">
+            <button id="read-cert" data-id="${data.anattId}"
+              class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800">
+              <i data-lucide="file-search" class="h-4 w-4"></i> Analyser le certificat (PDF)
+            </button>
+            <button id="dl-cert" data-id="${data.anattId}"
+              class="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50">
+              <i data-lucide="file-down" class="h-4 w-4"></i> Télécharger
+            </button>
+          </div>` : ''}
+        </div>
+        <div id="cert-info" class="mt-4"></div>`;
+      resultEl.classList.remove('hidden');
+      lucide.createIcons();
+
+      const read = $('read-cert');
+      if (read) read.addEventListener('click', () => analyserCertificat(read.dataset.id));
+      const dl = $('dl-cert');
+      if (dl) dl.addEventListener('click', () => telechargerCertificat(dl.dataset.id));
+    }
+
+    // Recupere le PDF via /telechargement/{id} et renvoie son ArrayBuffer
+    async function recupererPdf(anattId) {
+      const proxy = $('proxy').value.trim();
+      const target = `${ANATT_BASE}/telechargement/${anattId}`;
+      const resp = await fetch(proxy + encodeURIComponent(target));
+      if (!resp.ok) throw new Error(`Erreur ${resp.status} lors de la récupération du PDF.`);
+      return resp.arrayBuffer();
+    }
+
+    // Extraction de tout le texte d'un PDF via pdf.js
+    async function extraireTextePdf(buffer) {
+      const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+      let texte = '';
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        texte += content.items.map((i) => i.str).join(' ') + '\n';
+      }
+      return texte.replace(/[ \t]+/g, ' ').trim();
+    }
+
+    // Parse les champs utiles depuis le texte du certificat
+    function parserCertificat(texte) {
+      const find = (labels) => {
+        for (const label of labels) {
+          const re = new RegExp(label + '\\s*[:\\-]?\\s*([A-Z0-9ÉÈÀÂÊÎÔÛÇ\\-\\/ ]{2,60})', 'i');
+          const m = texte.match(re);
+          if (m) return m[1].trim();
+        }
+        return null;
+      };
+      return {
+        proprietaire: find(['Propriétaire', 'Proprietaire', 'Titulaire', 'Nom']),
+        chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
+        matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
+        marque: find(['Marque']),
+        modele: find(['Modèle', 'Modele', 'Type']),
+        couleur: find(['Couleur']),
+        annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
+        dateEmission: find(['Date d.?émission', 'Émis le', 'Date', 'Délivré le'])
+      };
+    }
+
+    async function analyserCertificat(anattId) {
+      const zone = $('cert-info');
+      try {
+        setStatus('loading', 'Analyse du certificat PDF…');
+        const buffer = await recupererPdf(anattId);
+        const texte = await extraireTextePdf(buffer);
+        const champs = parserCertificat(texte);
+        clearStatus();
+
+        const rows = [
+          { label: 'Propriétaire', value: champs.proprietaire, icon: 'user' },
+          { label: 'N° Châssis', value: champs.chassis, icon: 'fingerprint' },
+          { label: 'Matricule', value: champs.matricule, icon: 'car' },
+          { label: 'Marque', value: champs.marque, icon: 'tag' },
+          { label: 'Modèle', value: champs.modele, icon: 'bike' },
+          { label: 'Couleur', value: champs.couleur, icon: 'palette' },
+          { label: 'Annexe de', value: champs.annexe, icon: 'map-pin' },
+          { label: 'Date', value: champs.dateEmission, icon: 'calendar' }
+        ];
+
+        zone.innerHTML = `
+          <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden fade-in">
+            <div class="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
+              <i data-lucide="file-text" class="h-5 w-5 text-slate-600"></i>
+              <h3 class="text-sm font-semibold text-slate-800">Informations extraites du certificat</h3>
+            </div>
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-px bg-slate-100">
+              ${rows.map((r) => `
+                <div class="bg-white px-6 py-3.5">
+                  <dt class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                    <i data-lucide="${r.icon}" class="h-4 w-4"></i>${r.label}
+                  </dt>
+                  <dd class="mt-1 font-mono text-sm ${r.value ? 'text-slate-900' : 'text-slate-300'}">
+                    ${r.value || '—'}
+                  </dd>
+                </div>`).join('')}
+            </dl>
+            <details class="border-t border-slate-100 px-6 py-3 text-sm">
+              <summary class="cursor-pointer text-slate-500 hover:text-slate-700">Texte brut extrait</summary>
+              <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-600">${texte.replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</pre>
+            </details>
+          </div>`;
+        lucide.createIcons();
+      } catch (e) {
+        setStatus('error', e.message);
+      }
+    }
+
+    async function verifierChassis(vin) {
+      const proxy = $('proxy').value.trim();
+      const target = `${ANATT_BASE}/recherche?search_type=chassis&search=${encodeURIComponent(vin)}`;
+      const url = proxy + encodeURIComponent(target);
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Le proxy a répondu ${resp.status}. Vérifiez sa configuration.`);
+      const html = await resp.text();
+      return extraireDonnees(html);
+    }
+
+    async function telechargerCertificat(anattId) {
+      try {
+        setStatus('loading', 'Récupération du certificat…');
+        const proxy = $('proxy').value.trim();
+        const target = `${ANATT_BASE}/telechargement/${anattId}`;
+        const resp = await fetch(proxy + encodeURIComponent(target));
+        if (!resp.ok) throw new Error(`Erreur ${resp.status} lors du téléchargement.`);
+        const buffer = await resp.arrayBuffer();
+        const blob = new Blob([buffer], { type: 'application/pdf' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `certificat-${anattId}.pdf`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        clearStatus();
+      } catch (e) {
+        setStatus('error', e.message);
+      }
+    }
+
+    /* ---------- Recherche par numero de telechargement (lot de 10) ---------- */
+
+    const batchForm = $('batch-form');
+    const batchBtn = $('batch-btn');
+    const batchResultEl = $('batch-result');
+    const TAILLE_LOT = 10;
+    let dernierLot = []; // pour l'export CSV
+
+    // Parse les 4 champs demandes depuis le texte du certificat
+    function parserLot(texte) {
+      const find = (labels) => {
+        for (const label of labels) {
+          const re = new RegExp(label + '\\s*[:\\-]?\\s*([A-Z0-9ÉÈÀÂÊÎÔÛÇ\\-\\/ ]{2,60})', 'i');
+          const m = texte.match(re);
+          if (m) return m[1].trim();
+        }
+        return null;
+      };
+      return {
+        nomPrenom: find(['Propriétaire', 'Proprietaire', 'Titulaire', 'Nom et prénom', 'Nom et prenom', 'Nom']),
+        immatriculation: find(['Immatriculation', 'Matricule', 'Plaque']),
+        departement: find(['Département', 'Departement', 'Annexe de', 'Annexe']),
+        chassis: find(['N.?\\s*Châssis', 'Châssis', 'Chassis', 'VIN'])
+      };
+    }
+
+    function echapCsv(v) {
+      const s = (v == null ? '' : String(v));
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+
+    function exporterCsv(lignes) {
+      const entetes = ['Numéro', 'Nom et prénom', 'Immatriculation', 'Département', 'Châssis', 'Statut'];
+      const corps = lignes.map((l) => [
+        l.numero, l.nomPrenom, l.immatriculation, l.departement, l.chassis, l.statut
+      ].map(echapCsv).join(';'));
+      const csv = '\uFEFF' + [entetes.join(';'), ...corps].join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `certificats-${lignes[0]?.numero || 'export'}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function renderLot(lignes, termine) {
+      batchResultEl.innerHTML = `
+        <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div class="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
+            <div class="flex items-center gap-2">
+              <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
+              <h3 class="text-sm font-semibold text-slate-800">Analyse du lot (${lignes.length}/${TAILLE_LOT})</h3>
+            </div>
+            ${termine ? `
+              <button id="export-csv"
+                class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800">
+                <i data-lucide="download" class="h-4 w-4"></i> Exporter les infos (CSV)
+              </button>` : ''}
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-white text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th class="px-4 py-2 font-medium">N°</th>
+                  <th class="px-4 py-2 font-medium">Nom et prénom</th>
+                  <th class="px-4 py-2 font-medium">Immatriculation</th>
+                  <th class="px-4 py-2 font-medium">Département</th>
+                  <th class="px-4 py-2 font-medium">Châssis</th>
+                  <th class="px-4 py-2 font-medium">Statut</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 font-mono text-xs">
+                ${lignes.map((l) => `
+                  <tr class="${l.statut === 'OK' ? '' : 'bg-red-50/40'}">
+                    <td class="px-4 py-2.5 text-slate-500">${l.numero}</td>
+                    <td class="px-4 py-2.5 ${l.nomPrenom ? 'text-slate-900' : 'text-slate-300'}">${l.nomPrenom || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.immatriculation ? 'text-slate-900' : 'text-slate-300'}">${l.immatriculation || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.departement ? 'text-slate-900' : 'text-slate-300'}">${l.departement || '—'}</td>
+                    <td class="px-4 py-2.5 ${l.chassis ? 'text-slate-900' : 'text-slate-300'}">${l.chassis || '—'}</td>
+                    <td class="px-4 py-2.5">
+                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${l.statut === 'OK' ? 'bg-brand-50 text-brand-700' : 'bg-red-100 text-red-700'}">
+                        ${l.statut}
+                      </span>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+      batchResultEl.classList.remove('hidden');
+      lucide.createIcons();
+      const exp = $('export-csv');
+      if (exp) exp.addEventListener('click', () => exporterCsv(dernierLot));
+    }
+
+    batchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const debut = parseInt($('start-num').value, 10);
+      resultEl.classList.add('hidden');
+      batchResultEl.classList.add('hidden');
+      if (!Number.isInteger(debut) || debut < 1) {
+        setStatus('error', 'Veuillez saisir un numéro de départ valide.');
+        return;
+      }
+
+      batchBtn.disabled = true;
+      dernierLot = [];
+
+      for (let i = 0; i < TAILLE_LOT; i++) {
+        const numero = debut + i;
+        setStatus('loading', `Analyse du certificat ${numero} (${i + 1}/${TAILLE_LOT})…`);
+        let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
+        try {
+          const buffer = await recupererPdf(numero);
+          const texte = await extraireTextePdf(buffer);
+          const champs = parserLot(texte);
+          ligne = { numero, ...champs, statut: (champs.nomPrenom || champs.chassis) ? 'OK' : 'Vide' };
+        } catch (err) {
+          ligne.statut = 'Erreur';
+        }
+        dernierLot.push(ligne);
+        renderLot(dernierLot, false);
+      }
+
+      clearStatus();
+      renderLot(dernierLot, true);
+      batchBtn.disabled = false;
+    });
+
+    /* ---------- Recherche par VIN ---------- */
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const vin = $('vin').value.trim().toUpperCase();
+      resultEl.classList.add('hidden');
+      if (!vin) { setStatus('error', 'Veuillez saisir un numéro de châssis.'); return; }
+
+      btn.disabled = true;
+      setStatus('loading', 'Interrogation de la base ANaTT…');
+      try {
+        const { data, found } = await verifierChassis(vin);
+        if (!found) {
+          setStatus('info', `Aucune information trouvée pour le VIN « ${vin} ».`);
+        } else {
+          clearStatus();
+          renderResult(data);
+        }
+      } catch (err) {
+        setStatus('error', err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    lucide.createIcons();
+  </script>
+</body>
+</html>
