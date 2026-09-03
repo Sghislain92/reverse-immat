@@ -98,25 +98,33 @@
       </details>
     </section>
 
-    <!-- Recherche par numero de telechargement (lot de 10) -->
+    <!-- Recherche par numero de telechargement (intervalle) -->
     <section class="mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 class="text-base font-semibold text-slate-900">Recherche par numéro de téléchargement</h2>
       <p class="mt-1 text-sm text-slate-500">
-        Analyse automatique de 10 certificats consécutifs à partir du numéro saisi
-        (<span class="font-mono">/telechargement/{n}</span> → <span class="font-mono">{n+9}</span>).
+        Saisissez l’intervalle de certificats à analyser
+        (<span class="font-mono">/telechargement/{début}</span> → <span class="font-mono">{fin}</span>).
       </p>
 
-      <form id="batch-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
-        <div class="relative flex-1">
+      <form id="batch-form" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <div class="relative">
           <i data-lucide="list-ordered" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"></i>
-          <input id="start-num" type="number" min="1" inputmode="numeric" autocomplete="off"
-            placeholder="Ex : 10520"
+          <label for="start-num" class="mb-1 block text-xs font-medium text-slate-600">Début</label>
+          <input id="start-num" type="number" min="1" inputmode="numeric" autocomplete="off" required
+            placeholder="Ex : 544"
+            class="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 font-mono text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100" />
+        </div>
+        <div class="relative">
+          <i data-lucide="list-end" class="pointer-events-none absolute left-3 top-[2.1rem] h-4 w-4 -translate-y-1/2 text-slate-400"></i>
+          <label for="end-num" class="mb-1 block text-xs font-medium text-slate-600">Fin</label>
+          <input id="end-num" type="number" min="1" inputmode="numeric" autocomplete="off" required
+            placeholder="Ex : 900"
             class="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 font-mono text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100" />
         </div>
         <button id="batch-btn" type="submit"
           class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:opacity-60">
           <i data-lucide="layers" class="h-4 w-4"></i>
-          <span>Analyser 10 certificats</span>
+          <span>Analyser l’intervalle</span>
         </button>
       </form>
     </section>
@@ -400,12 +408,12 @@
       }
     }
 
-    /* ---------- Recherche par numero de telechargement (lot de 10) ---------- */
+    /* ---------- Recherche par numero de telechargement (intervalle) ---------- */
 
     const batchForm = $('batch-form');
     const batchBtn = $('batch-btn');
     const batchResultEl = $('batch-result');
-    const TAILLE_LOT = 500;
+    let tailleLot = 0;
     let dernierLot = []; // pour l'export CSV
 
     // Parse les 4 champs demandes en reutilisant le parseur par ancrage
@@ -444,7 +452,7 @@
           <div class="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
             <div class="flex items-center gap-2">
               <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
-              <h3 class="text-sm font-semibold text-slate-800">Analyse du lot (${lignes.length}/${TAILLE_LOT})</h3>
+                <h3 class="text-sm font-semibold text-slate-800">Analyse de l’intervalle (${lignes.length}/${tailleLot})</h3>
             </div>
             ${termine ? `
               <button id="export-csv"
@@ -491,19 +499,25 @@
     batchForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const debut = parseInt($('start-num').value, 10);
+      const fin = parseInt($('end-num').value, 10);
       resultEl.classList.add('hidden');
       batchResultEl.classList.add('hidden');
-      if (!Number.isInteger(debut) || debut < 1) {
-        setStatus('error', 'Veuillez saisir un numéro de départ valide.');
+      if (!Number.isInteger(debut) || debut < 1 || !Number.isInteger(fin) || fin < 1) {
+        setStatus('error', 'Veuillez saisir un début et une fin valides.');
+        return;
+      }
+      if (fin < debut) {
+        setStatus('error', 'La fin doit être supérieure ou égale au début.');
         return;
       }
 
       batchBtn.disabled = true;
       dernierLot = [];
+      tailleLot = fin - debut + 1;
 
-      for (let i = 0; i < TAILLE_LOT; i++) {
+      for (let i = 0; i < tailleLot; i++) {
         const numero = debut + i;
-        setStatus('loading', `Analyse du certificat ${numero} (${i + 1}/${TAILLE_LOT})…`);
+        setStatus('loading', `Analyse du certificat ${numero} (${i + 1}/${tailleLot})…`);
         let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
         try {
           const buffer = await recupererPdf(numero);
