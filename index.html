@@ -66,7 +66,8 @@ function valueAfter(lines, patterns, stopPatterns=[]) {
   const label=new RegExp(patterns,'i');
   for(let i=0;i<lines.length;i++) {
     if(!label.test(lines[i])) continue;
-    const same=normalizeText(lines[i].replace(label,'')).replace(/^[:\-–]\s*/,'');
+    const match=lines[i].match(label);
+    const same=match ? normalizeText(lines[i].slice((match.index||0)+match[0].length)).replace(/^\s*[:\-–]\s*/,'') : '';
     if(same && !stopPatterns.some(p=>new RegExp(p,'i').test(same))) return same;
     for(let j=i+1;j<Math.min(lines.length,i+4);j++) {
       const next=normalizeText(lines[j]); if(!next) continue;
@@ -80,10 +81,10 @@ function parseCertificate(lines, number) {
   const text=lines.join('\n');
   let owner='';
   for(let i=0;i<lines.length;i++) if(/propri[ée]taire du v[ée]hicule/i.test(lines[i])) { for(let j=i-1;j>=0;j--) { const candidate=normalizeText(lines[j]).replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i,''); if(candidate && !/^certificat|^agence|^r[ée]publique/i.test(candidate)) { owner=candidate; break; } } break; }
-  const chassis=valueAfter(lines,'num[ée]ro\s+ch[aâ]ssis\s+est', ['r[ée]f[ée]renc','matricule','annexe']);
-  const immatriculation=valueAfter(lines,'sous\s+le\s+matricule', ['annexe','pour\s+le']);
+  const chassis=valueAfter(lines,'num[ée]ro\\s+ch[aâ]ssis\\s+est', ['r[ée]f[ée]renc','matricule','annexe']);
+  const immatriculation=valueAfter(lines,'sous\\s+le\\s+matricule', ['annexe','pour\\s+le']);
   const depMatch=text.match(/annexe\s+de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '\u2019\-]{1,60})/i);
-  const departement=depMatch ? normalizeText(depMatch[1].replace(/\s+pour\b[\s\S]*/i,'')) : valueAfter(lines,'annexe\s+de', ['pour\s+le']);
+  const departement=depMatch ? normalizeText(depMatch[1].replace(/\s+pour\b[\s\S]*/i,'')) : valueAfter(lines,'annexe\\s+de', ['pour\\s+le']);
   const certMatch=text.match(/N[°ºo]\s*(\d{2,})/i);
   const data={numero:Number(certMatch?.[1]||number),nomPrenom:owner,immatriculation,departement,chassis,status:'OK'};
   const missing=['nomPrenom','immatriculation','departement','chassis'].filter(k=>!data[k]);
