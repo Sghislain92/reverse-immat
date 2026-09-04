@@ -135,6 +135,7 @@
         <span id="resume-text"></span>
         <div class="flex gap-2">
           <button id="resume-continue" type="button" class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700">Reprendre</button>
+          <button id="resume-download" type="button" class="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">Télécharger le niveau actuel</button>
           <button id="resume-discard" type="button" class="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">Ignorer</button>
         </div>
       </div>
@@ -472,6 +473,14 @@
       return `Immat-${debut}-${fin}.${ext}`;
     }
 
+    function bornesReelles(lignes) {
+      const numeros = lignes
+        .map((l) => Number(l.numero))
+        .filter((n) => Number.isInteger(n));
+      if (!numeros.length) return null;
+      return { debut: Math.min(...numeros), fin: Math.max(...numeros) };
+    }
+
     function exporterCsv(debut, fin, lignes) {
       const entetes = ['Numéro', 'Nom et prénom', 'Immatriculation', 'Département', 'Châssis', 'Statut'];
       const corps = lignes.map((l) => [
@@ -494,6 +503,15 @@
       a.download = nomFichier(debut, fin, 'json');
       a.click();
       URL.revokeObjectURL(a.href);
+    }
+
+    function exporterProgression(p) {
+      const bornes = bornesReelles(p.lignes);
+      if (!bornes) {
+        setStatus('error', 'Aucune ligne exploitable à télécharger.');
+        return;
+      }
+      exporterJson(bornes.debut, bornes.fin, p.lignes);
     }
 
     /* ---------- Sauvegarde de progression (anti-perte en cas de fermeture/rafraîchissement) ---------- */
@@ -527,6 +545,7 @@
       const date = new Date(p.majLe).toLocaleString('fr-FR');
       texte.textContent = `Une analyse de ${p.debut} à ${p.fin} s'est arrêtée à ${p.lignes.length}/${taille} certificats (${date}). Reprendre là où elle s'est arrêtée ?`;
       $('resume-continue').textContent = 'Reprendre';
+      $('resume-download').classList.remove('hidden');
       banniere.classList.remove('hidden');
 
       $('resume-continue').onclick = () => {
@@ -535,6 +554,7 @@
         $('end-num').value = p.fin;
         lancerLot(p.debut, p.fin, p.lignes);
       };
+      $('resume-download').onclick = () => exporterProgression(p);
       $('resume-discard').onclick = () => {
         effacerProgression();
         banniere.classList.add('hidden');
@@ -571,12 +591,14 @@
       const date = new Date(d.termineLe).toLocaleString('fr-FR');
       texte.textContent = `Dernier export disponible : ${d.debut}-${d.fin} (${d.lignes.length} certificats, généré le ${date}). Le fichier a-t-il bien été téléchargé ?`;
       $('resume-continue').textContent = 'Retélécharger';
+      $('resume-download').classList.add('hidden');
       banniere.classList.remove('hidden');
 
       $('resume-continue').onclick = () => {
         exporterJson(d.debut, d.fin, d.lignes);
         banniere.classList.add('hidden');
       };
+      $('resume-download').onclick = () => exporterProgression(d);
       $('resume-discard').onclick = () => {
         localStorage.removeItem(CLE_DERNIER_EXPORT);
         banniere.classList.add('hidden');
