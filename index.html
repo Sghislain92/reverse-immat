@@ -172,9 +172,15 @@
       const styles = {
         loading: 'border-brand-200 bg-brand-50 text-brand-800',
         error:   'border-red-200 bg-red-50 text-red-700',
-        info:    'border-slate-200 bg-slate-50 text-slate-600'
+        info:    'border-slate-200 bg-slate-50 text-slate-600',
+        success: 'border-emerald-200 bg-emerald-50 text-emerald-700'
       };
-      const icon = { loading: 'loader-2', error: 'alert-triangle', info: 'info' }[type];
+      const icon = {
+        loading: 'loader-2',
+        error: 'alert-triangle',
+        info: 'info',
+        success: 'check-circle-2'
+      }[type];
       const spin = type === 'loading' ? 'spin' : '';
       statusEl.className = 'mt-4 fade-in rounded-lg border px-4 py-3 text-sm flex items-center gap-2 ' + styles[type];
       statusEl.innerHTML = `<i data-lucide="${icon}" class="h-4 w-4 ${spin}"></i><span>${message}</span>`;
@@ -464,6 +470,39 @@
       };
     }
 
+    // Une ligne est valide uniquement si les quatre champs extraits sont présents
+    // et si son statut vaut OK (sans modifier les données ni le parseur existant).
+    function statutEstOK(ligne) {
+      return String(ligne?.statut || '').trim().toLowerCase() === 'ok';
+    }
+
+    function ligneCompleteEtOK(ligne) {
+      return statutEstOK(ligne) &&
+        Boolean(ligne.nomPrenom) &&
+        Boolean(ligne.immatriculation) &&
+        Boolean(ligne.departement) &&
+        Boolean(ligne.chassis);
+    }
+
+    function obtenirNumerosManquants(debut, fin, lignes) {
+      const existants = new Set(lignes.map((l) => Number(l.numero)));
+      const manquants = [];
+      for (let numero = debut; numero <= fin; numero++) {
+        if (!existants.has(numero)) manquants.push(numero);
+      }
+      return manquants;
+    }
+
+    function obtenirLignesVidesOuPartielles(lignes) {
+      return lignes.filter((ligne) => !ligneCompleteEtOK(ligne));
+    }
+
+    function objectifFinalAtteint(debut, fin, lignes) {
+      return obtenirNumerosManquants(debut, fin, lignes).length === 0 &&
+        lignes.length === fin - debut + 1 &&
+        lignes.every(ligneCompleteEtOK);
+    }
+
     function echapCsv(v) {
       const s = (v == null ? '' : String(v));
       return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -537,14 +576,14 @@
       let p;
       try { p = JSON.parse(localStorage.getItem(CLE_PROGRESSION) || 'null'); } catch (e) { p = null; }
       if (!p || !Array.isArray(p.lignes) || !p.lignes.length) return false;
-      const taille = p.fin - p.debut + 1;
-      if (p.lignes.length >= taille) { effacerProgression(); return false; } // deja terminee
+      const numerosManquants = obtenirNumerosManquants(p.debut, p.fin, p.lignes);
+      if (numerosManquants.length === 0) { return false; }
 
       const banniere = $('resume-banner');
       const texte = $('resume-text');
       const date = new Date(p.majLe).toLocaleString('fr-FR');
-      texte.textContent = `Une analyse de ${p.debut} à ${p.fin} s'est arrêtée à ${p.lignes.length}/${taille} certificats (${date}). Reprendre là où elle s'est arrêtée ?`;
-      $('resume-continue').textContent = 'Reprendre';
+      texte.textContent = `Une analyse de ${p.debut} à ${p.fin} s'est arrêtée : ${numerosManquants.length} numéro(s) n'ont pas encore été extrait(s) (${date}). Continuer ?`;
+      $('resume-continue').textContent = 'Continuer';
       $('resume-download').classList.remove('hidden');
       banniere.classList.remove('hidden');
 
@@ -605,99 +644,165 @@
       };
     }
 
+    let notificationLot = null;
+
+    function notificationHtml() {
+      if (!notificationLot) return '';
+      const styles = {
+        success: ['border-emerald-200 bg-emerald-50 text-emerald-800', 'check-circle-2', 'text-emerald-600'],
+        error: ['border-red-200 bg-red-50 text-red-800', 'alert-triangle', 'text-red-600'],
+        warning: ['border-amber-200 bg-amber-50 text-amber-800', 'alert-circle', 'text-amber-600']
+      };
+      const s = styles[notificationLot.type] || styles.warning;
+      return `<div class="mx-4 mt-4 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${s[0]}">
+        <i data-lucide="${s[1]}" class="mt-0.5 h-5 w-5 shrink-0 ${s[2]}"></i>
+        <p class="font-semibold">${notificationLot.message}</p>
+      </div>`;
+    }
+
     function renderLot(lignes, termine) {
+      const numerosManquants = obtenirNumerosManquants(lotDebut, lotFin, lignes);
+      const lignesVides = obtenirLignesVidesOuPartielles(lignes);
+      const objectif = objectifFinalAtteint(lotDebut, lotFin, lignes);
+
       batchResultEl.innerHTML = `
         <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          <div class="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-6 py-4">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-6 py-4">
             <div class="flex items-center gap-2">
               <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
+              <div>
                 <h3 class="text-sm font-semibold text-slate-800">Analyse de l’intervalle (${lignes.length}/${tailleLot})</h3>
+                <p class="mt-0.5 text-xs text-slate-500">${lignes.filter(ligneCompleteEtOK).length} ligne(s) OK — ${numerosManquants.length} absente(s) — ${lignesVides.length} à corriger</p>
+              </div>
             </div>
-            ${termine ? `
-              <div class="flex gap-2">
-                <button id="export-csv"
-                  class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800">
-                  <i data-lucide="download" class="h-4 w-4"></i> CSV
-                </button>
-                <button id="export-json"
-                  class="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50">
-                  <i data-lucide="download" class="h-4 w-4"></i> JSON
-                </button>
-              </div>` : ''}
+            <div class="flex flex-wrap gap-2">
+              ${numerosManquants.length ? `<button id="continuer-lot" class="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"><i data-lucide="play" class="h-4 w-4"></i> Continuer (${numerosManquants.length})</button>` : ''}
+              ${lignesVides.length && numerosManquants.length === 0 ? `<button id="gerer-lignes-vides" class="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-700"><i data-lucide="rotate-cw" class="h-4 w-4"></i> Gérer les lignes vides (${lignesVides.length})</button>` : ''}
+              ${termine && objectif ? `<button id="export-csv" class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800"><i data-lucide="download" class="h-4 w-4"></i> CSV</button><button id="export-json" class="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"><i data-lucide="download" class="h-4 w-4"></i> JSON</button>` : ''}
+            </div>
           </div>
+          ${notificationHtml()}
           <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
-              <thead class="bg-white text-xs uppercase tracking-wide text-slate-400">
-                <tr>
-                  <th class="px-4 py-2 font-medium">N°</th>
-                  <th class="px-4 py-2 font-medium">Nom et prénom</th>
-                  <th class="px-4 py-2 font-medium">Immatriculation</th>
-                  <th class="px-4 py-2 font-medium">Département</th>
-                  <th class="px-4 py-2 font-medium">Châssis</th>
-                  <th class="px-4 py-2 font-medium">Statut</th>
-                </tr>
-              </thead>
+              <thead class="bg-white text-xs uppercase tracking-wide text-slate-400"><tr><th class="px-4 py-2 font-medium">N°</th><th class="px-4 py-2 font-medium">Nom et prénom</th><th class="px-4 py-2 font-medium">Immatriculation</th><th class="px-4 py-2 font-medium">Département</th><th class="px-4 py-2 font-medium">Châssis</th><th class="px-4 py-2 font-medium">Statut</th></tr></thead>
               <tbody class="divide-y divide-slate-100 font-mono text-xs">
-                ${lignes.map((l) => `
-                  <tr class="${l.statut === 'OK' ? '' : 'bg-red-50/40'}">
-                    <td class="px-4 py-2.5 text-slate-500">${l.numero}</td>
-                    <td class="px-4 py-2.5 ${l.nomPrenom ? 'text-slate-900' : 'text-slate-300'}">${l.nomPrenom || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.immatriculation ? 'text-slate-900' : 'text-slate-300'}">${l.immatriculation || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.departement ? 'text-slate-900' : 'text-slate-300'}">${l.departement || '—'}</td>
-                    <td class="px-4 py-2.5 ${l.chassis ? 'text-slate-900' : 'text-slate-300'}">${l.chassis || '—'}</td>
-                    <td class="px-4 py-2.5">
-                      <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${l.statut === 'OK' ? 'bg-brand-50 text-brand-700' : 'bg-red-100 text-red-700'}">
-                        ${l.statut}
-                      </span>
-                    </td>
-                  </tr>`).join('')}
+                ${lignes.map((l) => `<tr class="${statutEstOK(l) ? '' : 'bg-red-50/40'}"><td class="px-4 py-2.5 text-slate-500">${l.numero}</td><td class="px-4 py-2.5 ${l.nomPrenom ? 'text-slate-900' : 'text-slate-300'}">${l.nomPrenom || '—'}</td><td class="px-4 py-2.5 ${l.immatriculation ? 'text-slate-900' : 'text-slate-300'}">${l.immatriculation || '—'}</td><td class="px-4 py-2.5 ${l.departement ? 'text-slate-900' : 'text-slate-300'}">${l.departement || '—'}</td><td class="px-4 py-2.5 ${l.chassis ? 'text-slate-900' : 'text-slate-300'}">${l.chassis || '—'}</td><td class="px-4 py-2.5"><span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statutEstOK(l) ? 'bg-brand-50 text-brand-700' : 'bg-red-100 text-red-700'}">${l.statut || 'Erreur'}</span></td></tr>`).join('')}
               </tbody>
             </table>
           </div>
         </div>`;
       batchResultEl.classList.remove('hidden');
       lucide.createIcons();
+
+      const continuer = $('continuer-lot');
+      if (continuer) continuer.addEventListener('click', () => lancerLot(lotDebut, lotFin, dernierLot));
+      const gerer = $('gerer-lignes-vides');
+      if (gerer) gerer.addEventListener('click', () => gererLignesVides(lotDebut, lotFin));
       const exp = $('export-csv');
       if (exp) exp.addEventListener('click', () => exporterCsv(lotDebut, lotFin, dernierLot));
       const expJson = $('export-json');
       if (expJson) expJson.addEventListener('click', () => exporterJson(lotDebut, lotFin, dernierLot));
     }
 
-    // Lance (ou reprend) l'analyse d'un intervalle. `dejaFaites` contient les
-    // lignes deja obtenues lors d'une precedente tentative (reprise apres coupure).
+    // Relance uniquement une ligne déjà présente mais vide, partielle ou en erreur.
+    async function reextraireLigne(ligneExistante) {
+      const numero = Number(ligneExistante.numero);
+      try {
+        const buffer = await recupererPdf(numero);
+        const lignesPdf = await extraireTextePdf(buffer);
+        const champs = parserLot(lignesPdf);
+        const complete = Boolean(champs.nomPrenom) && Boolean(champs.immatriculation) && Boolean(champs.departement) && Boolean(champs.chassis);
+        return { numero, ...champs, statut: complete ? 'OK' : 'Vide' };
+      } catch (erreur) {
+        return { ...ligneExistante, statut: 'Erreur', erreur: erreur.message };
+      }
+    }
+
+    function finaliserLot(debut, fin, corrigees = 0, tentatives = 0) {
+      if (!objectifFinalAtteint(debut, fin, dernierLot)) return false;
+      const message = corrigees > 0
+        ? `Objectif atteint : ${corrigees} ligne(s) corrigée(s) automatiquement après ${tentatives} tentative(s).`
+        : 'Objectif atteint : toutes les lignes ont été extraites correctement.';
+      notificationLot = { type: 'success', message };
+      renderLot(dernierLot, true);
+      setStatus('success', message);
+      effacerProgression();
+      sauverDernierExport(debut, fin, dernierLot);
+      exporterJson(debut, fin, dernierLot);
+      return true;
+    }
+
+    // Corrige uniquement les lignes existantes. Les numéros absents sont réservés à Continuer.
+    async function gererLignesVides(debut, fin) {
+      let tentatives = 0;
+      let corrigees = 0;
+      let aCorriger = obtenirLignesVidesOuPartielles(dernierLot);
+
+      while (aCorriger.length && tentatives < 4) {
+        tentatives++;
+        setStatus('loading', `Correction des lignes vides : tentative ${tentatives}/4 — ${aCorriger.length} ligne(s)…`);
+        for (const ancienne of aCorriger) {
+          const numero = Number(ancienne.numero);
+          const avant = ligneCompleteEtOK(ancienne);
+          setStatus('loading', `Nouvelle extraction de la ligne ${numero} (tentative ${tentatives}/4)…`);
+          const nouvelle = await reextraireLigne(ancienne);
+          const index = dernierLot.findIndex((l) => Number(l.numero) === numero);
+          if (index !== -1) {
+            dernierLot[index] = nouvelle;
+            if (!avant && ligneCompleteEtOK(nouvelle)) corrigees++;
+          }
+          renderLot(dernierLot, false);
+          sauverProgression(debut, fin, dernierLot);
+        }
+        aCorriger = obtenirLignesVidesOuPartielles(dernierLot);
+      }
+
+      if (aCorriger.length === 0) {
+        finaliserLot(debut, fin, corrigees, tentatives);
+      } else {
+        notificationLot = { type: 'warning', message: `${aCorriger.length} ligne(s) restent vides ou partielles après ${tentatives} tentative(s).` };
+        renderLot(dernierLot, false);
+        setStatus('error', notificationLot.message);
+      }
+    }
+
+    // Lance ou continue uniquement les numéros absents du tableau.
     async function lancerLot(debut, fin, dejaFaites) {
       batchBtn.disabled = true;
       lotDebut = debut;
       lotFin = fin;
-      dernierLot = Array.isArray(dejaFaites) ? dejaFaites.slice() : [];
       tailleLot = fin - debut + 1;
-      const depart = debut + dernierLot.length;
+      dernierLot = Array.isArray(dejaFaites) ? dejaFaites.slice() : [];
+      notificationLot = null;
+      renderLot(dernierLot, false);
 
-      if (dernierLot.length) renderLot(dernierLot, false);
-
-      for (let numero = depart; numero <= fin; numero++) {
-        const position = numero - debut + 1;
-        setStatus('loading', `Analyse du certificat ${numero} (${position}/${tailleLot})…`);
-        let ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'OK' };
-        try {
-          const buffer = await avecReessai(() => recupererPdf(numero));
-          const lignes = await extraireTextePdf(buffer);
-          const champs = parserLot(lignes);
-          ligne = { numero, ...champs, statut: (champs.nomPrenom || champs.chassis) ? 'OK' : 'Vide' };
-        } catch (err) {
-          ligne.statut = 'Erreur';
+      try {
+        const manquants = obtenirNumerosManquants(debut, fin, dernierLot);
+        for (const numero of manquants) {
+          const position = numero - debut + 1;
+          setStatus('loading', `Analyse du certificat ${numero} (${position}/${tailleLot})…`);
+          let ligne;
+          try {
+            const buffer = await avecReessai(() => recupererPdf(numero), 2);
+            const lignesPdf = await extraireTextePdf(buffer);
+            const champs = parserLot(lignesPdf);
+            const complete = Boolean(champs.nomPrenom) && Boolean(champs.immatriculation) && Boolean(champs.departement) && Boolean(champs.chassis);
+            ligne = { numero, ...champs, statut: complete ? 'OK' : 'Vide' };
+          } catch (erreur) {
+            ligne = { numero, nomPrenom: null, immatriculation: null, departement: null, chassis: null, statut: 'Erreur', erreur: erreur.message };
+          }
+          dernierLot.push(ligne);
+          dernierLot.sort((a, b) => Number(a.numero) - Number(b.numero));
+          renderLot(dernierLot, false);
+          sauverProgression(debut, fin, dernierLot);
         }
-        dernierLot.push(ligne);
-        renderLot(dernierLot, false);
-        sauverProgression(debut, fin, dernierLot); // permet de reprendre si la page se ferme/rafraichit
-      }
 
-      clearStatus();
-      renderLot(dernierLot, true);
-      effacerProgression();
-      sauverDernierExport(debut, fin, dernierLot); // filet de securite, avant meme le declenchement du telechargement
-      exporterJson(debut, fin, dernierLot); // telechargement JSON automatique des que la fin est atteinte
-      batchBtn.disabled = false;
+        const vides = obtenirLignesVidesOuPartielles(dernierLot);
+        if (vides.length) await gererLignesVides(debut, fin);
+        else finaliserLot(debut, fin);
+      } finally {
+        batchBtn.disabled = false;
+      }
     }
 
     batchForm.addEventListener('submit', async (e) => {
