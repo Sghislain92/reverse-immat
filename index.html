@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr" class="bg-slate-50">
 <head>
@@ -212,7 +213,7 @@
       });
 
       const data = {
-        proprietaire: find(['Propriétaire', 'Proprietaire', 'Nom']),
+        proprietaire: nettoyerNomPrenom(find(['Propriétaire', 'Proprietaire', 'Nom'])),
         chassis: find(['N.?\\s*Châssis', 'Chassis', 'VIN']),
         matricule: find(['Matricule', 'Plaque', 'Immatriculation']),
         annexe: find(['Annexe de', 'Annexe', 'Département', 'Departement']),
@@ -307,6 +308,13 @@
     // Extraction du texte d'un PDF via pdf.js, reconstruit LIGNE PAR LIGNE.
     // On regroupe les fragments par position verticale (Y) pour retrouver
     // la structure d'origine : chaque valeur est sur la ligne SUIVANT son libelle.
+      // Supprime toutes les virgules des noms et prénoms avant affichage et export.
+      function nettoyerNomPrenom(valeur) {
+        if (valeur == null) return null;
+        const propre = String(valeur).replace(/,/g, '').replace(/\s{2,}/g, ' ').trim();
+        return propre || null;
+      }
+
     async function extraireTextePdf(buffer) {
       const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
       const lignes = [];
@@ -351,7 +359,7 @@
       if (iProp > 0) {
         let j = iProp - 1;
         while (j >= 0 && /^(M\.?|Mme\.?|Mlle\.?)$/i.test(lignes[j].trim())) j--;
-        if (j >= 0) proprietaire = lignes[j].replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i, '').trim() || null;
+        if (j >= 0) proprietaire = nettoyerNomPrenom(lignes[j].replace(/^(M\.?|Mme\.?|Mlle\.?)\s*/i, ''));
       }
 
       // Chassis : ligne apres "...numero chassis est :"
@@ -360,10 +368,16 @@
       // Matricule : ligne apres "...sous le matricule :"
       const matricule = ligneApres(/sous le matricule\s*:?/i);
 
-      // Annexe / departement : mot(s) apres "annexe de"
+      // Annexe / département : les formulations signalées indiquent un département absent.
       let annexe = null;
-      const mAnnexe = texte.match(/annexe de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '’\-]+)/i);
-      if (mAnnexe) annexe = mAnnexe[1].replace(/\s+pour\b[\s\S]*/i, '').trim();
+      const departementNonSpecifie = /est\s+pri[ée]\s+de\s+se\s+rapprocher\s+de\s+l['’]annexe\s+de/i.test(texte) ||
+        /pour\s+le\s+retrait\s+de\s+la\s+carte\s+grise\s+et\s+la\s+fixation\s+de\s+la\s+plaque\s+min[ée]ralogique\s*\.?/i.test(texte);
+      if (departementNonSpecifie) {
+        annexe = 'Non spécifié';
+      } else {
+        const mAnnexe = texte.match(/annexe de\s+([A-ZÉÈÀÂÊÎÔÛÇ][A-ZÉÈÀÂÊÎÔÛÇ '’\-]+)/i);
+        if (mAnnexe) annexe = mAnnexe[1].replace(/\s+pour\b[\s\S]*/i, '').trim();
+      }
 
       // Numero du certificat (ex : "N° 9000")
       let numero = null;
