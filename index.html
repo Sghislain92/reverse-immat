@@ -472,6 +472,9 @@
     let dernierLot = []; // pour l'export CSV/JSON
     let lotDebut = null;
     let lotFin = null;
+    let extractionEnCours = false;
+    let extractionEnPause = false;
+    let doublonsSupprimes = false;
 
     // Parse les 4 champs demandes en reutilisant le parseur par ancrage
     function parserLot(lignes) {
@@ -515,6 +518,47 @@
       return obtenirNumerosManquants(debut, fin, lignes).length === 0 &&
         lignes.length === fin - debut + 1 &&
         lignes.every(ligneCompleteEtOK);
+    }
+
+    // Un doublon est une ligne complète dont les quatre champs métiers sont identiques.
+    function cleDoublon(ligne) {
+      return [ligne.nomPrenom, ligne.immatriculation, ligne.departement, ligne.chassis]
+        .map((v) => String(v ?? '').trim().toLocaleUpperCase('fr-FR'))
+        .join('\u001F');
+    }
+
+    function obtenirDoublons(lignes) {
+      const groupes = new Map();
+      lignes.forEach((ligne) => {
+        if (!ligneCompleteEtOK(ligne)) return;
+        const cle = cleDoublon(ligne);
+        if (!groupes.has(cle)) groupes.set(cle, []);
+        groupes.get(cle).push(ligne);
+      });
+      return [...groupes.values()].filter((groupe) => groupe.length > 1);
+    }
+
+    function nombreLignesDoublons(groupes) {
+      return groupes.reduce((total, groupe) => total + groupe.length - 1, 0);
+    }
+
+    function supprimerDoublons() {
+      const groupes = obtenirDoublons(dernierLot);
+      const aSupprimer = new Set(groupes.flatMap((groupe) => groupe.slice(1).map((ligne) => Number(ligne.numero))));
+      dernierLot = dernierLot.filter((ligne) => !aSupprimer.has(Number(ligne.numero)));
+      doublonsSupprimes = true;
+      notificationLot = { type: 'success', message: `${aSupprimer.size} doublon(s) supprimé(s). Une seule ligne a été conservée par groupe.` };
+      sauverProgression(lotDebut, lotFin, dernierLot);
+      renderLot(dernierLot, true);
+    }
+
+    function demanderPause() {
+      if (!extractionEnCours) return;
+      extractionEnPause = true;
+      sauverProgression(lotDebut, lotFin, dernierLot);
+      notificationLot = { type: 'warning', message: 'Extraction mise en pause. Téléchargez l’état actuel ou continuez quand vous le souhaitez.' };
+      renderLot(dernierLot, false);
+      setStatus('info', 'Extraction en pause.');
     }
 
     function echapCsv(v) {
@@ -595,6 +639,7 @@
 
       const banniere = $('resume-banner');
       const texte = $('resume-text');
+      extractionEnPause = true;
       const date = new Date(p.majLe).toLocaleString('fr-FR');
       texte.textContent = `Une analyse de ${p.debut} à ${p.fin} s'est arrêtée : ${numerosManquants.length} numéro(s) n'ont pas encore été extrait(s) (${date}). Continuer ?`;
       $('resume-continue').textContent = 'Continuer';
@@ -677,7 +722,11 @@
     function renderLot(lignes, termine) {
       const numerosManquants = obtenirNumerosManquants(lotDebut, lotFin, lignes);
       const lignesVides = obtenirLignesVidesOuPartielles(lignes);
+      const doublons = obtenirDoublons(lignes);
+      const detailDoublons = doublons.map((groupe) => `lignes ${groupe.map((ligne) => ligne.numero).join(', ')} (${groupe.length} occurrences)`).join(' · ');
       const objectif = objectifFinalAtteint(lotDebut, lotFin, lignes);
+      const exportAutorise = termine && (objectif || (doublonsSupprimes && !lignesVides.length && !doublons.length));
+      const pause = extractionEnPause;
 
       batchResultEl.innerHTML = `
         <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -686,16 +735,20 @@
               <i data-lucide="table" class="h-5 w-5 text-slate-600"></i>
               <div>
                 <h3 class="text-sm font-semibold text-slate-800">Analyse de l’intervalle (${lignes.length}/${tailleLot})</h3>
-                <p class="mt-0.5 text-xs text-slate-500">${lignes.filter(ligneCompleteEtOK).length} ligne(s) OK — ${numerosManquants.length} absente(s) — ${lignesVides.length} à corriger</p>
+                <p class="mt-0.5 text-xs text-slate-500">${lignes.filter(ligneCompleteEtOK).length} ligne(s) OK — ${numerosManquants.length} absente(s) — ${lignesVides.length} à corriger${doublons.length ? ` — ${doublons.length} groupe(s) en doublon` : ''}</p>
               </div>
             </div>
             <div class="flex flex-wrap gap-2">
-              ${numerosManquants.length ? `<button id="continuer-lot" class="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"><i data-lucide="play" class="h-4 w-4"></i> Continuer (${numerosManquants.length})</button>` : ''}
-              ${lignesVides.length && numerosManquants.length === 0 ? `<button id="gerer-lignes-vides" class="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-700"><i data-lucide="rotate-cw" class="h-4 w-4"></i> Gérer les lignes vides (${lignesVides.length})</button>` : ''}
-              ${termine && objectif ? `<button id="export-csv" class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800"><i data-lucide="download" class="h-4 w-4"></i> CSV</button><button id="export-json" class="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"><i data-lucide="download" class="h-4 w-4"></i> JSON</button>` : ''}
+              ${extractionEnCours && !pause ? `<button id="pause-lot" class="inline-flex items-center gap-2 rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"><i data-lucide="pause" class="h-4 w-4"></i> Pause</button>` : ''}
+              ${pause || numerosManquants.length ? `<button id="continuer-lot" class="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"><i data-lucide="play" class="h-4 w-4"></i> Continuer${numerosManquants.length ? ` (${numerosManquants.length})` : ''}</button>` : ''}
+              ${(pause || (lignesVides.length && numerosManquants.length === 0)) ? `<button id="gerer-lignes-vides" class="inline-flex items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-700"><i data-lucide="rotate-cw" class="h-4 w-4"></i> Gérer les lignes vides (${lignesVides.length})</button>` : ''}
+              ${pause ? `<button id="download-progress" class="inline-flex items-center gap-2 rounded-lg border border-amber-600 px-4 py-2 text-sm font-semibold text-amber-700 transition hover:bg-amber-50"><i data-lucide="download" class="h-4 w-4"></i> Télécharger l’état actuel</button>` : ''}
+              ${termine && objectif && doublons.length ? `<button id="supprimer-doublons" class="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"><i data-lucide="trash-2" class="h-4 w-4"></i> Supprimer les doublons (${nombreLignesDoublons(doublons)})</button>` : ''}
+              ${exportAutorise ? `<button id="export-csv" class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800"><i data-lucide="download" class="h-4 w-4"></i> CSV</button><button id="export-json" class="inline-flex items-center gap-2 rounded-lg border border-brand-700 px-4 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"><i data-lucide="download" class="h-4 w-4"></i> JSON</button>` : ''}
             </div>
           </div>
           ${notificationHtml()}
+          ${doublons.length ? `<div class="mx-4 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800"><strong>Doublons détectés :</strong> ${detailDoublons}</div>` : ''}
           <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
               <thead class="bg-white text-xs uppercase tracking-wide text-slate-400"><tr><th class="px-4 py-2 font-medium">N°</th><th class="px-4 py-2 font-medium">Nom et prénom</th><th class="px-4 py-2 font-medium">Immatriculation</th><th class="px-4 py-2 font-medium">Département</th><th class="px-4 py-2 font-medium">Châssis</th><th class="px-4 py-2 font-medium">Statut</th></tr></thead>
@@ -708,10 +761,19 @@
       batchResultEl.classList.remove('hidden');
       lucide.createIcons();
 
+      const pauseBtn = $('pause-lot');
+      if (pauseBtn) pauseBtn.addEventListener('click', demanderPause);
       const continuer = $('continuer-lot');
       if (continuer) continuer.addEventListener('click', () => lancerLot(lotDebut, lotFin, dernierLot));
       const gerer = $('gerer-lignes-vides');
-      if (gerer) gerer.addEventListener('click', () => gererLignesVides(lotDebut, lotFin));
+      if (gerer) gerer.addEventListener('click', () => {
+        extractionEnPause = false;
+        gererLignesVides(lotDebut, lotFin);
+      });
+      const dlProgress = $('download-progress');
+      if (dlProgress) dlProgress.addEventListener('click', () => exporterProgression({ debut: lotDebut, fin: lotFin, lignes: dernierLot }));
+      const supDoublons = $('supprimer-doublons');
+      if (supDoublons) supDoublons.addEventListener('click', supprimerDoublons);
       const exp = $('export-csv');
       if (exp) exp.addEventListener('click', () => exporterCsv(lotDebut, lotFin, dernierLot));
       const expJson = $('export-json');
@@ -734,6 +796,8 @@
 
     function finaliserLot(debut, fin, corrigees = 0, tentatives = 0) {
       if (!objectifFinalAtteint(debut, fin, dernierLot)) return false;
+      extractionEnCours = false;
+      extractionEnPause = false;
       const message = corrigees > 0
         ? `Objectif atteint : ${corrigees} ligne(s) corrigée(s) automatiquement après ${tentatives} tentative(s).`
         : 'Objectif atteint : toutes les lignes ont été extraites correctement.';
@@ -748,6 +812,7 @@
 
     // Corrige uniquement les lignes existantes. Les numéros absents sont réservés à Continuer.
     async function gererLignesVides(debut, fin) {
+      extractionEnCours = true;
       let tentatives = 0;
       let corrigees = 0;
       let aCorriger = obtenirLignesVidesOuPartielles(dernierLot);
@@ -783,6 +848,8 @@
     // Lance ou continue uniquement les numéros absents du tableau.
     async function lancerLot(debut, fin, dejaFaites) {
       batchBtn.disabled = true;
+      extractionEnCours = true;
+      extractionEnPause = false;
       lotDebut = debut;
       lotFin = fin;
       tailleLot = fin - debut + 1;
@@ -807,15 +874,21 @@
           }
           dernierLot.push(ligne);
           dernierLot.sort((a, b) => Number(a.numero) - Number(b.numero));
-          renderLot(dernierLot, false);
           sauverProgression(debut, fin, dernierLot);
+          if (extractionEnPause) break;
+          renderLot(dernierLot, false);
         }
 
+        if (extractionEnPause) {
+          renderLot(dernierLot, false);
+          return;
+        }
         const vides = obtenirLignesVidesOuPartielles(dernierLot);
         if (vides.length) await gererLignesVides(debut, fin);
         else finaliserLot(debut, fin);
       } finally {
         batchBtn.disabled = false;
+        if (!extractionEnPause && !objectifFinalAtteint(debut, fin, dernierLot)) extractionEnCours = false;
       }
     }
 
