@@ -592,8 +592,22 @@
       URL.revokeObjectURL(a.href);
     }
 
+    // Nettoyage automatique avant tout export JSON : pour chaque groupe de
+    // doublons complets, seule la première ligne est conservée.
+    function supprimerDoublonsPourExport(lignes) {
+      const dejaVues = new Set();
+      return lignes.filter((ligne) => {
+        if (!ligneCompleteEtOK(ligne)) return true;
+        const cle = cleDoublon(ligne);
+        if (dejaVues.has(cle)) return false;
+        dejaVues.add(cle);
+        return true;
+      });
+    }
+
     function exporterJson(debut, fin, lignes) {
-      const json = JSON.stringify(lignes, null, 2);
+      const lignesNettoyees = supprimerDoublonsPourExport(Array.isArray(lignes) ? lignes : []);
+      const json = JSON.stringify(lignesNettoyees, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -609,7 +623,8 @@
         return;
       }
       const debut = Number.isInteger(Number(p.debut)) ? Number(p.debut) : lotDebut;
-      const fin = Number.isInteger(Number(p.fin)) ? Number(p.fin) : lotFin;
+      const numerosTraites = lignesOk.map((ligne) => Number(ligne.numero)).filter(Number.isInteger);
+      const fin = numerosTraites.length ? Math.max(...numerosTraites) : null;
       if (!Number.isInteger(debut) || !Number.isInteger(fin)) {
         setStatus('error', 'Les bornes de l’intervalle sont introuvables.');
         return;
